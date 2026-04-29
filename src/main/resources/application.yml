@@ -1,17 +1,21 @@
 server:
   port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 spring:
   servlet:
     multipart:
       max-file-size: 2048GB
       max-request-size: 2048GB
-
   datasource:
     name: nddb
-    url: jdbc:mysql://localhost:3306/nddb
-    username: root
-    password: yanjiyi0107
+    url: ${NETDISK_DB_URL:jdbc:mysql://localhost:3306/nddb?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${NETDISK_DB_USERNAME:root}
+    password: ${NETDISK_DB_PASSWORD:root}
     type: com.alibaba.druid.pool.DruidDataSource
     driver-class-name: com.mysql.cj.jdbc.Driver
     dbcp2:
@@ -23,7 +27,16 @@ spring:
       test-on-return: false
       test-while-idle: true
       max-total: 20
+  flyway:
+    baseline-on-migrate: true
+    locations: classpath:db/migration
 
 mybatis:
   mapper-locations: classpath:mapping/*.xml
   type-aliases-package: com.suannai.netdisk.model
+
+netdisk:
+  storage:
+    upload-path: ${NETDISK_UPLOAD_PATH:/data/netdisk/upload}
+    temp-dir-name: ${NETDISK_UPLOAD_TEMP_DIR:.tmp}
+    upload-session-ttl-hours: ${NETDISK_UPLOAD_SESSION_TTL_HOURS:24}

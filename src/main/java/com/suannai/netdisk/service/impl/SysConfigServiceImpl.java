@@ -25,21 +25,13 @@ public class SysConfigServiceImpl implements SysConfigService {
         SysConfigExample.Criteria criteria = example.createCriteria();
         criteria.andNameEqualTo(name);
 
-        return sysConfigMapper.selectByExample(example).get(0);
+        List<SysConfig> configs = sysConfigMapper.selectByExample(example);
+        return configs.isEmpty() ? null : configs.get(0);
     }
 
     @Override
     public boolean ConfigIsAllow(String name) {
-        SysConfigExample example = new SysConfigExample();
-        SysConfigExample.Criteria criteria = example.createCriteria();
-        criteria.andNameEqualTo(name);
-
-        SysConfig config = sysConfigMapper.selectByExample(example).get(0);
-        if(config!=null)
-        {
-            return config.getValue().equals("YES");
-        }
-
-        return false;
+        SysConfig config = GetConfig(name);
+        return config != null && "YES".equalsIgnoreCase(config.getValue());
     }
 }
