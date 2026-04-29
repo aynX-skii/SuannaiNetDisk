@@ -1,22 +1,22 @@
 package com.suannai.netdisk.v2.workspace;
 
 public class BreadcrumbView {
-    private Integer id;
+    private Long id;
     private String name;
 
     public BreadcrumbView() {
     }
 
-    public BreadcrumbView(Integer id, String name) {
+    public BreadcrumbView(Long id, String name) {
         this.id = id;
         this.name = name;
     }
 
-    public Integer getId() {
+    public Long getId() {
         return id;
     }
 
-    public void setId(Integer id) {
+    public void setId(Long id) {
         this.id = id;
     }
 

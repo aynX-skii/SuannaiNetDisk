@@ -43,12 +43,12 @@ public class PrepareUploadResponse {
 
     public static class CreatedDirectoryPayload {
         private String path;
-        private Integer directoryId;
+        private Long directoryId;
 
         public CreatedDirectoryPayload() {
         }
 
-        public CreatedDirectoryPayload(String path, Integer directoryId) {
+        public CreatedDirectoryPayload(String path, Long directoryId) {
             this.path = path;
             this.directoryId = directoryId;
         }
@@ -61,24 +61,24 @@ public class PrepareUploadResponse {
             this.path = path;
         }
 
-        public Integer getDirectoryId() {
+        public Long getDirectoryId() {
             return directoryId;
         }
 
-        public void setDirectoryId(Integer directoryId) {
+        public void setDirectoryId(Long directoryId) {
             this.directoryId = directoryId;
         }
     }
 
     public static class InstantFilePayload {
         private String clientId;
-        private Integer fileId;
+        private Long fileId;
         private String message;
 
         public InstantFilePayload() {
         }
 
-        public InstantFilePayload(String clientId, Integer fileId, String message) {
+        public InstantFilePayload(String clientId, Long fileId, String message) {
             this.clientId = clientId;
             this.fileId = fileId;
             this.message = message;
@@ -92,11 +92,11 @@ public class PrepareUploadResponse {
             this.clientId = clientId;
         }
 
-        public Integer getFileId() {
+        public Long getFileId() {
             return fileId;
         }
 
-        public void setFileId(Integer fileId) {
+        public void setFileId(Long fileId) {
             this.fileId = fileId;
         }
 

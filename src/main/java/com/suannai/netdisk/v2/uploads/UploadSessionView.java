@@ -6,7 +6,7 @@ import java.util.List;
 public class UploadSessionView {
     private String uploadId;
     private String clientId;
-    private Integer targetParentId;
+    private Long targetParentId;
     private Integer chunkSize;
     private Integer totalParts;
     private List<Integer> uploadedParts = new ArrayList<>();
@@ -28,11 +28,11 @@ public class UploadSessionView {
         this.clientId = clientId;
     }
 
-    public Integer getTargetParentId() {
+    public Long getTargetParentId() {
         return targetParentId;
     }
 
-    public void setTargetParentId(Integer targetParentId) {
+    public void setTargetParentId(Long targetParentId) {
         this.targetParentId = targetParentId;
     }
 

@@ -1,23 +1,23 @@
 package com.suannai.netdisk.v2.uploads;
 
-import javax.validation.Valid;
-import javax.validation.constraints.NotNull;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import java.util.ArrayList;
 import java.util.List;
 
 public class PrepareUploadRequest {
     @NotNull
-    private Integer parentId;
+    private Long parentId;
     @Valid
     private List<PrepareUploadDirectoryRequest> directories = new ArrayList<>();
     @Valid
     private List<PrepareUploadFileRequest> files = new ArrayList<>();
 
-    public Integer getParentId() {
+    public Long getParentId() {
         return parentId;
     }
 
-    public void setParentId(Integer parentId) {
+    public void setParentId(Long parentId) {
         this.parentId = parentId;
     }
 

@@ -1,19 +1,18 @@
 package com.suannai.netdisk.v2.workspace;
 
 import com.suannai.netdisk.common.exception.ApiException;
-import com.suannai.netdisk.mapper.ServiceMapper;
-import com.suannai.netdisk.mapper.SysFileTabMapper;
-import com.suannai.netdisk.mapper.UserMapper;
-import com.suannai.netdisk.model.Service;
-import com.suannai.netdisk.model.ServiceExample;
-import com.suannai.netdisk.model.SysFileTab;
-import com.suannai.netdisk.model.User;
-import com.suannai.netdisk.service.SysConfigService;
-import com.suannai.netdisk.service.SysFileTabService;
+import com.suannai.netdisk.common.util.SessionUser;
+import com.suannai.netdisk.service.AppSettingsService;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.FileSystemUtils;
 
-import javax.servlet.http.HttpServletResponse;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -22,155 +21,128 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-@org.springframework.stereotype.Service
+@Service
 public class WorkspaceService {
-    private final ServiceMapper serviceMapper;
-    private final SysFileTabMapper sysFileTabMapper;
-    private final SysFileTabService sysFileTabService;
-    private final SysConfigService sysConfigService;
-    private final UserMapper userMapper;
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final AppSettingsService appSettingsService;
 
-    public WorkspaceService(ServiceMapper serviceMapper,
-                            SysFileTabMapper sysFileTabMapper,
-                            SysFileTabService sysFileTabService,
-                            SysConfigService sysConfigService,
-                            UserMapper userMapper) {
-        this.serviceMapper = serviceMapper;
-        this.sysFileTabMapper = sysFileTabMapper;
-        this.sysFileTabService = sysFileTabService;
-        this.sysConfigService = sysConfigService;
-        this.userMapper = userMapper;
+    private final RowMapper<EntryRecord> entryMapper = (resultSet, rowNum) -> new EntryRecord(
+            resultSet.getLong("id"),
+            resultSet.getLong("user_id"),
+            resultSet.getObject("parent_id", Long.class),
+            resultSet.getObject("storage_object_id", Long.class),
+            resultSet.getString("name"),
+            resultSet.getString("entry_type"),
+            "ACTIVE".equals(resultSet.getString("status")),
+            toInstant(resultSet.getTimestamp("created_at")),
+            toInstant(resultSet.getTimestamp("updated_at")),
+            resultSet.getString("sha256"),
+            resultSet.getString("md5"),
+            resultSet.getObject("file_size", Long.class),
+            resultSet.getString("storage_path")
+    );
+
+    public WorkspaceService(NamedParameterJdbcTemplate jdbcTemplate, AppSettingsService appSettingsService) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.appSettingsService = appSettingsService;
     }
 
-    public DirectoryView loadDirectory(User user, Integer parentId) {
-        Service current = getDirectoryOrRoot(user, parentId);
-        List<Service> children = listChildren(user, current.getId());
-        children.sort(Comparator
-                .comparing(Service::getDirmask).reversed()
-                .thenComparing(Service::getUserfilename, String.CASE_INSENSITIVE_ORDER));
+    public DirectoryView loadDirectory(SessionUser user, Long parentId) {
+        EntryRecord current = getDirectoryOrRoot(user.id(), parentId);
+        List<FileEntryView> children = listChildren(current.id()).stream().map(this::toView).collect(Collectors.toList());
 
         DirectoryView view = new DirectoryView();
         view.setCurrent(toView(current));
-        view.setItems(children.stream().map(this::toView).collect(Collectors.toList()));
-        view.setBreadcrumbs(buildBreadcrumbs(user, current));
+        view.setItems(children);
+        view.setBreadcrumbs(buildBreadcrumbs(user.id(), current));
         return view;
     }
 
-    public FileEntryView getEntry(User user, int id) {
-        return toView(requireOwnedService(user, id));
+    public FileEntryView getEntry(SessionUser user, Long id) {
+        return toView(requireOwnedEntry(user.id(), id));
     }
 
-    public Service getDirectoryOrRoot(User user, Integer parentId) {
+    public EntryRecord getDirectoryOrRoot(Long userId, Long parentId) {
         if (parentId == null) {
-            return ensureRoot(user);
+            return ensureRoot(userId);
         }
 
-        Service current = requireOwnedService(user, parentId);
-        if (!Boolean.TRUE.equals(current.getDirmask())) {
+        EntryRecord current = requireOwnedEntry(userId, parentId);
+        if (!current.directory()) {
             throw new ApiException("INVALID_DIRECTORY", "目标不是文件夹");
         }
         return current;
     }
 
     @Transactional
-    public FileEntryView createDirectory(User user, Integer parentId, String name) {
-        validateName(name);
-        Service parent = getDirectoryOrRoot(user, parentId);
-        if (findChild(user, parent.getId(), name) != null) {
-            throw new ApiException("NAME_CONFLICT", "同目录下已存在同名文件或目录");
-        }
-
-        Service directory = new Service();
-        directory.setUserid(user.getId());
-        directory.setUserfilename(name);
-        directory.setSysfilerecordid(-1);
-        directory.setStatus(true);
-        directory.setUploaddate(new Date());
-        directory.setParentid(parent.getId());
-        directory.setDirmask(true);
-        serviceMapper.insertSelective(directory);
-
-        return toView(findChild(user, parent.getId(), name));
+    public FileEntryView createDirectory(SessionUser user, Long parentId, String name) {
+        EntryRecord parent = getDirectoryOrRoot(user.id(), parentId);
+        return toView(createDirectoryInternal(user.id(), parent.id(), name));
     }
 
     @Transactional
-    public int ensureDirectoryPath(User user, int parentId, String relativePath, List<DirectoryCreatedView> createdDirectories) {
+    public Long ensureDirectoryPath(SessionUser user, Long parentId, String relativePath, List<DirectoryCreatedView> createdDirectories) {
         if (relativePath == null || relativePath.isBlank()) {
             return parentId;
         }
 
-        int currentParentId = parentId;
-        String[] segments = relativePath.split("/");
+        Long currentParentId = parentId;
         StringBuilder currentPath = new StringBuilder();
-        for (String rawSegment : segments) {
+        for (String rawSegment : relativePath.split("/")) {
             String segment = rawSegment.trim();
             validateName(segment);
-            Service child = findChild(user, currentParentId, segment);
+            EntryRecord child = findChild(user.id(), currentParentId, segment);
             if (child == null) {
-                Service directory = new Service();
-                directory.setUserid(user.getId());
-                directory.setUserfilename(segment);
-                directory.setSysfilerecordid(-1);
-                directory.setStatus(true);
-                directory.setUploaddate(new Date());
-                directory.setParentid(currentParentId);
-                directory.setDirmask(true);
-                serviceMapper.insertSelective(directory);
-                child = findChild(user, currentParentId, segment);
-                if (currentPath.length() > 0) {
+                child = createDirectoryInternal(user.id(), currentParentId, segment);
+                if (!currentPath.isEmpty()) {
                     currentPath.append('/');
                 }
                 currentPath.append(segment);
-                createdDirectories.add(new DirectoryCreatedView(currentPath.toString(), child.getId()));
-            } else if (!Boolean.TRUE.equals(child.getDirmask())) {
+                createdDirectories.add(new DirectoryCreatedView(currentPath.toString(), child.id()));
+            } else if (!child.directory()) {
                 throw new ApiException("NAME_CONFLICT", "目录路径被同名文件占用");
             } else {
-                if (currentPath.length() > 0) {
+                if (!currentPath.isEmpty()) {
                     currentPath.append('/');
                 }
                 currentPath.append(segment);
             }
-            currentParentId = child.getId();
+            currentParentId = child.id();
         }
-
         return currentParentId;
     }
 
     @Transactional
-    public Service createFileReference(User user, int parentId, String fileName, int sysFileRecordId, boolean active) {
+    public EntryRecord createFileReference(SessionUser user, Long parentId, String fileName, Long storageObjectId) {
         validateName(fileName);
-        if (findChild(user, parentId, fileName) != null) {
+        if (findChild(user.id(), parentId, fileName) != null) {
             throw new ApiException("NAME_CONFLICT", "同目录下已存在同名文件或目录");
         }
 
-        Service service = new Service();
-        service.setUserid(user.getId());
-        service.setUserfilename(fileName);
-        service.setSysfilerecordid(sysFileRecordId);
-        service.setStatus(active);
-        service.setUploaddate(new Date());
-        service.setParentid(parentId);
-        service.setDirmask(false);
-        serviceMapper.insertSelective(service);
-
-        return findChild(user, parentId, fileName);
+        Long id = insertEntry(user.id(), parentId, storageObjectId, fileName, "FILE");
+        jdbcTemplate.update(
+                "UPDATE storage_objects SET ref_count = ref_count + 1 WHERE id = :id",
+                new MapSqlParameterSource("id", storageObjectId)
+        );
+        return requireOwnedEntry(user.id(), id);
     }
 
-    public boolean existsSibling(User user, int parentId, String name) {
-        return findChild(user, parentId, name) != null;
+    public boolean existsSibling(SessionUser user, Long parentId, String name) {
+        return findChild(user.id(), parentId, name) != null;
     }
 
-    public String findAvailableName(User user, int parentId, String originalName) {
+    public String findAvailableName(SessionUser user, Long parentId, String originalName) {
         if (!existsSibling(user, parentId, originalName)) {
             return originalName;
         }
@@ -190,231 +162,248 @@ public class WorkspaceService {
         return name + "-" + index + extension;
     }
 
-    public Service requireOwnedService(User user, int serviceId) {
-        Service service = serviceMapper.selectByPrimaryKey(serviceId);
-        if (service == null || !Objects.equals(service.getUserid(), user.getId())) {
-            throw new ApiException("NOT_FOUND", "文件或目录不存在");
-        }
-        return service;
-    }
-
     @Transactional
-    public void move(User user, List<Integer> ids, int targetParentId) {
-        Service targetParent = getDirectoryOrRoot(user, targetParentId);
-        List<Integer> uniqueIds = ids.stream().distinct().collect(Collectors.toList());
-        for (Integer id : uniqueIds) {
-            Service service = requireOwnedService(user, id);
-            if (Objects.equals(service.getId(), targetParent.getId())) {
+    public void move(SessionUser user, List<Long> ids, Long targetParentId) {
+        EntryRecord targetParent = getDirectoryOrRoot(user.id(), targetParentId);
+        for (Long id : ids.stream().distinct().toList()) {
+            EntryRecord entry = requireOwnedEntry(user.id(), id);
+            if (Objects.equals(entry.id(), targetParent.id())) {
                 throw new ApiException("INVALID_MOVE", "不能把目录移动到自己内部");
             }
-            if (Objects.equals(service.getParentid(), targetParent.getId())) {
+            if (Objects.equals(entry.parentId(), targetParent.id())) {
                 continue;
             }
-            if (Boolean.TRUE.equals(service.getDirmask()) && isAncestor(service.getId(), targetParent.getId(), user)) {
+            if (entry.directory() && isAncestor(user.id(), entry.id(), targetParent.id())) {
                 throw new ApiException("INVALID_MOVE", "不能把目录移动到自己的子目录中");
             }
-            if (existsSibling(user, targetParent.getId(), service.getUserfilename())) {
+            if (findChild(user.id(), targetParent.id(), entry.name()) != null) {
                 throw new ApiException("NAME_CONFLICT", "目标目录存在同名条目");
             }
 
-            service.setParentid(targetParent.getId());
-            serviceMapper.updateByPrimaryKeySelective(service);
+            jdbcTemplate.update(
+                    "UPDATE file_entries SET parent_id = :parentId WHERE id = :id AND user_id = :userId",
+                    params(user.id()).addValue("id", entry.id()).addValue("parentId", targetParent.id())
+            );
         }
     }
 
     @Transactional
-    public void delete(User user, int id) {
-        Service service = requireOwnedService(user, id);
-        deleteRecursive(user, service);
-        if (Objects.equals(user.getImgserviceid(), id)) {
-            user.setImgserviceid(-1);
-            userMapper.updateByPrimaryKeySelective(user);
-        }
+    public void delete(SessionUser user, Long id) {
+        EntryRecord entry = requireOwnedEntry(user.id(), id);
+        jdbcTemplate.update(
+                "UPDATE users SET avatar_entry_id = NULL WHERE id = :userId AND avatar_entry_id = :entryId",
+                params(user.id()).addValue("entryId", id)
+        );
+        deleteRecursive(user.id(), entry);
     }
 
-    public void streamDownload(User user, int id, boolean inline, HttpServletResponse response) throws IOException {
-        if (!sysConfigService.ConfigIsAllow("AllowDownload")) {
+    public void streamDownload(SessionUser user, Long id, boolean inline, HttpServletResponse response) throws IOException {
+        if (!appSettingsService.isEnabled("allow_download")) {
             throw new ApiException("FORBIDDEN", "管理员已关闭下载");
         }
 
-        Service service = requireOwnedService(user, id);
-        if (Boolean.TRUE.equals(service.getDirmask())) {
-            String filename = URLEncoder.encode(service.getUserfilename() + ".zip", StandardCharsets.UTF_8);
+        EntryRecord entry = requireOwnedEntry(user.id(), id);
+        if (entry.directory()) {
+            String filename = URLEncoder.encode(entry.name() + ".zip", StandardCharsets.UTF_8);
             response.setHeader("Content-Disposition", "attachment;filename=" + filename);
             response.setContentType("application/zip");
             try (ZipOutputStream outputStream = new ZipOutputStream(response.getOutputStream())) {
-                zipDirectory(user, service, service.getUserfilename() + "/", outputStream);
+                zipDirectory(user.id(), entry, entry.name() + "/", outputStream);
             }
             return;
         }
 
-        SysFileTab sysFileTab = sysFileTabMapper.selectByPrimaryKey(service.getSysfilerecordid());
-        if (sysFileTab == null) {
+        if (entry.storagePath() == null) {
             throw new ApiException("FILE_LOST", "文件记录不存在");
         }
 
-        File file = new File(sysFileTab.getLocation());
-        String disposition = inline ? "inline" : "attachment";
-        response.setHeader(
-                "Content-Disposition",
-                disposition + ";filename=" + URLEncoder.encode(service.getUserfilename(), StandardCharsets.UTF_8)
-        );
-        response.setContentType("application/octet-stream");
-        response.setContentLengthLong(file.length());
+        Path path = Path.of(entry.storagePath());
+        if (!Files.exists(path)) {
+            throw new ApiException("FILE_LOST", "文件已丢失");
+        }
 
-        try (InputStream inputStream = new BufferedInputStream(new FileInputStream(file));
+        String disposition = inline ? "inline" : "attachment";
+        response.setHeader("Content-Disposition", disposition + ";filename=" + URLEncoder.encode(entry.name(), StandardCharsets.UTF_8));
+        response.setContentType("application/octet-stream");
+        response.setContentLengthLong(Files.size(path));
+
+        try (InputStream inputStream = new BufferedInputStream(new FileInputStream(path.toFile()));
              BufferedOutputStream outputStream = new BufferedOutputStream(response.getOutputStream())) {
-            byte[] buffer = new byte[8192];
-            int length;
-            while ((length = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, length);
-            }
+            inputStream.transferTo(outputStream);
             outputStream.flush();
         }
     }
 
-    @Transactional
-    public User bindAvatar(User user, int serviceId) {
-        Service service = requireOwnedService(user, serviceId);
-        user.setImgserviceid(service.getId());
-        userMapper.updateByPrimaryKeySelective(user);
-        return userMapper.selectByPrimaryKey(user.getId());
-    }
-
-    public Service ensureRoot(User user) {
-        ServiceExample example = new ServiceExample();
-        ServiceExample.Criteria criteria = example.createCriteria();
-        criteria.andUseridEqualTo(user.getId());
-        criteria.andParentidEqualTo(-1);
-        List<Service> services = serviceMapper.selectByExample(example);
-        if (!services.isEmpty()) {
-            return services.get(0);
+    public EntryRecord ensureRoot(Long userId) {
+        List<EntryRecord> roots = jdbcTemplate.query(
+                baseEntrySql() + " WHERE e.user_id = :userId AND e.parent_id IS NULL AND e.status = 'ACTIVE'",
+                params(userId),
+                entryMapper
+        );
+        if (!roots.isEmpty()) {
+            return roots.get(0);
         }
 
-        SysFileTab root = sysFileTabService.GetRoot();
-        Service service = new Service();
-        service.setUserid(user.getId());
-        service.setUserfilename("/");
-        service.setSysfilerecordid(root.getId());
-        service.setStatus(true);
-        service.setUploaddate(new Date());
-        service.setParentid(-1);
-        service.setDirmask(true);
-        serviceMapper.insertSelective(service);
-
-        services = serviceMapper.selectByExample(example);
-        return services.get(0);
+        Long id = insertEntry(userId, null, null, "/", "DIRECTORY");
+        return requireOwnedEntry(userId, id);
     }
 
-    private List<Service> listChildren(User user, int parentId) {
-        ServiceExample example = new ServiceExample();
-        ServiceExample.Criteria criteria = example.createCriteria();
-        criteria.andUseridEqualTo(user.getId());
-        criteria.andParentidEqualTo(parentId);
-        return serviceMapper.selectByExample(example);
+    public EntryRecord requireOwnedEntry(Long userId, Long id) {
+        List<EntryRecord> entries = jdbcTemplate.query(
+                baseEntrySql() + " WHERE e.id = :id AND e.user_id = :userId AND e.status = 'ACTIVE'",
+                params(userId).addValue("id", id),
+                entryMapper
+        );
+        if (entries.isEmpty()) {
+            throw new ApiException("NOT_FOUND", "文件或目录不存在");
+        }
+        return entries.get(0);
     }
 
-    private List<BreadcrumbView> buildBreadcrumbs(User user, Service current) {
+    private EntryRecord createDirectoryInternal(Long userId, Long parentId, String name) {
+        validateName(name);
+        if (findChild(userId, parentId, name) != null) {
+            throw new ApiException("NAME_CONFLICT", "同目录下已存在同名文件或目录");
+        }
+
+        Long id = insertEntry(userId, parentId, null, name, "DIRECTORY");
+        return requireOwnedEntry(userId, id);
+    }
+
+    private Long insertEntry(Long userId, Long parentId, Long storageObjectId, String name, String entryType) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(
+                "INSERT INTO file_entries(user_id, parent_id, storage_object_id, name, entry_type, status) " +
+                        "VALUES(:userId, :parentId, :storageObjectId, :name, :entryType, 'ACTIVE')",
+                params(userId)
+                        .addValue("parentId", parentId)
+                        .addValue("storageObjectId", storageObjectId)
+                        .addValue("name", name)
+                        .addValue("entryType", entryType),
+                keyHolder,
+                new String[]{"id"}
+        );
+        return keyHolder.getKey().longValue();
+    }
+
+    private List<EntryRecord> listChildren(Long parentId) {
+        return jdbcTemplate.query(
+                baseEntrySql() + " WHERE e.parent_id = :parentId AND e.status = 'ACTIVE' " +
+                        "ORDER BY e.entry_type = 'DIRECTORY' DESC, e.name ASC",
+                new MapSqlParameterSource("parentId", parentId),
+                entryMapper
+        );
+    }
+
+    private List<BreadcrumbView> buildBreadcrumbs(Long userId, EntryRecord current) {
         List<BreadcrumbView> breadcrumbs = new ArrayList<>();
-        Service pointer = current;
+        EntryRecord pointer = current;
         while (pointer != null) {
-            breadcrumbs.add(0, new BreadcrumbView(pointer.getId(), pointer.getParentid() == -1 ? "/" : pointer.getUserfilename()));
-            if (pointer.getParentid() == -1) {
+            breadcrumbs.add(0, new BreadcrumbView(pointer.id(), pointer.parentId() == null ? "/" : pointer.name()));
+            if (pointer.parentId() == null) {
                 break;
             }
-            pointer = requireOwnedService(user, pointer.getParentid());
+            pointer = requireOwnedEntry(userId, pointer.parentId());
         }
         return breadcrumbs;
     }
 
-    private FileEntryView toView(Service service) {
-        SysFileTab sysFileTab = service.getSysfilerecordid() != null && service.getSysfilerecordid() > 0
-                ? sysFileTabMapper.selectByPrimaryKey(service.getSysfilerecordid())
-                : null;
-
+    private FileEntryView toView(EntryRecord entry) {
         FileEntryView view = new FileEntryView();
-        view.setId(service.getId());
-        view.setName(service.getParentid() != null && service.getParentid() == -1 ? "/" : service.getUserfilename());
-        view.setDirectory(Boolean.TRUE.equals(service.getDirmask()));
-        view.setStatus(Boolean.TRUE.equals(service.getStatus()));
-        view.setParentId(service.getParentid());
-        view.setUploadDate(service.getUploaddate() == null ? null : Instant.ofEpochMilli(service.getUploaddate().getTime()).toString());
-        view.setSize(sysFileTab == null ? 0L : sysFileTab.getFilesize());
-        view.setFileHash(sysFileTab == null ? null : sysFileTab.getFilehash());
-        view.setDownloadUrl(Boolean.TRUE.equals(service.getDirmask()) ? null : "/api/v2/files/" + service.getId() + "/download");
+        view.setId(entry.id());
+        view.setName(entry.parentId() == null ? "/" : entry.name());
+        view.setDirectory(entry.directory());
+        view.setStatus(entry.active());
+        view.setParentId(entry.parentId());
+        view.setUploadDate(entry.createdAt() == null ? null : entry.createdAt().toString());
+        view.setSize(entry.fileSize() == null ? 0L : entry.fileSize());
+        view.setFileHash(entry.sha256());
+        view.setDownloadUrl(entry.directory() ? null : "/api/v2/files/" + entry.id() + "/download");
         return view;
     }
 
-    private Service findChild(User user, int parentId, String name) {
-        ServiceExample example = new ServiceExample();
-        ServiceExample.Criteria criteria = example.createCriteria();
-        criteria.andUseridEqualTo(user.getId());
-        criteria.andParentidEqualTo(parentId);
-        criteria.andUserfilenameEqualTo(name);
-        List<Service> services = serviceMapper.selectByExample(example);
-        return services.isEmpty() ? null : services.get(0);
+    private EntryRecord findChild(Long userId, Long parentId, String name) {
+        List<EntryRecord> entries = jdbcTemplate.query(
+                baseEntrySql() + " WHERE e.user_id = :userId AND e.parent_key = COALESCE(:parentId, 0) " +
+                        "AND e.name = :name AND e.status = 'ACTIVE'",
+                params(userId).addValue("parentId", parentId).addValue("name", name),
+                entryMapper
+        );
+        return entries.isEmpty() ? null : entries.get(0);
     }
 
-    private boolean isAncestor(int candidateAncestorId, int nodeId, User user) {
-        Service current = requireOwnedService(user, nodeId);
-        while (current.getParentid() != null && current.getParentid() != -1) {
-            if (Objects.equals(current.getParentid(), candidateAncestorId)) {
+    private boolean isAncestor(Long userId, Long candidateAncestorId, Long nodeId) {
+        EntryRecord current = requireOwnedEntry(userId, nodeId);
+        while (current.parentId() != null) {
+            if (Objects.equals(current.parentId(), candidateAncestorId)) {
                 return true;
             }
-            current = requireOwnedService(user, current.getParentid());
+            current = requireOwnedEntry(userId, current.parentId());
         }
         return false;
     }
 
-    private void deleteRecursive(User user, Service service) {
-        if (Boolean.TRUE.equals(service.getDirmask())) {
-            for (Service child : listChildren(user, service.getId())) {
-                deleteRecursive(user, child);
+    private void deleteRecursive(Long userId, EntryRecord entry) {
+        if (entry.directory()) {
+            for (EntryRecord child : listChildren(entry.id())) {
+                deleteRecursive(userId, child);
             }
         }
 
-        serviceMapper.deleteByPrimaryKey(service.getId());
-        if (!Boolean.TRUE.equals(service.getDirmask()) && service.getSysfilerecordid() != null && service.getSysfilerecordid() > 0) {
-            sysFileTabService.deleteIfUnUse(service.getSysfilerecordid());
+        jdbcTemplate.update("DELETE FROM file_entries WHERE id = :id AND user_id = :userId", params(userId).addValue("id", entry.id()));
+        if (!entry.directory() && entry.storageObjectId() != null) {
+            releaseStorageObject(entry.storageObjectId(), entry.storagePath());
         }
     }
 
-    private void zipDirectory(User user, Service directory, String prefix, ZipOutputStream outputStream) throws IOException {
-        List<Service> children = listChildren(user, directory.getId());
+    private void releaseStorageObject(Long storageObjectId, String storagePath) {
+        jdbcTemplate.update(
+                "UPDATE storage_objects SET ref_count = CASE WHEN ref_count > 0 THEN ref_count - 1 ELSE 0 END WHERE id = :id",
+                new MapSqlParameterSource("id", storageObjectId)
+        );
+
+        if (!appSettingsService.isEnabled("allow_delete_storage_object")) {
+            return;
+        }
+
+        Integer references = jdbcTemplate.queryForObject(
+                "SELECT ref_count FROM storage_objects WHERE id = :id",
+                new MapSqlParameterSource("id", storageObjectId),
+                Integer.class
+        );
+        if (references != null && references == 0) {
+            if (storagePath != null) {
+                FileSystemUtils.deleteRecursively(new File(storagePath));
+            }
+            jdbcTemplate.update("DELETE FROM storage_objects WHERE id = :id", new MapSqlParameterSource("id", storageObjectId));
+        }
+    }
+
+    private void zipDirectory(Long userId, EntryRecord directory, String prefix, ZipOutputStream outputStream) throws IOException {
+        List<EntryRecord> children = listChildren(directory.id());
         if (children.isEmpty()) {
             outputStream.putNextEntry(new ZipEntry(prefix));
             outputStream.closeEntry();
             return;
         }
 
-        for (Service child : children) {
-            if (Boolean.TRUE.equals(child.getDirmask())) {
-                zipDirectory(user, child, prefix + child.getUserfilename() + "/", outputStream);
+        for (EntryRecord child : children) {
+            if (child.directory()) {
+                zipDirectory(userId, child, prefix + child.name() + "/", outputStream);
                 continue;
             }
 
-            SysFileTab sysFileTab = sysFileTabMapper.selectByPrimaryKey(child.getSysfilerecordid());
-            if (sysFileTab == null) {
-                continue;
-            }
-
-            outputStream.putNextEntry(new ZipEntry(prefix + child.getUserfilename()));
-            File file = new File(sysFileTab.getLocation());
-            if (file.exists()) {
-                try (InputStream inputStream = new BufferedInputStream(new FileInputStream(file))) {
-                    byte[] buffer = new byte[8192];
-                    int length;
-                    while ((length = inputStream.read(buffer)) != -1) {
-                        outputStream.write(buffer, 0, length);
+            outputStream.putNextEntry(new ZipEntry(prefix + child.name()));
+            if (child.storagePath() != null) {
+                File file = new File(child.storagePath());
+                if (file.exists()) {
+                    try (InputStream inputStream = new BufferedInputStream(new FileInputStream(file))) {
+                        inputStream.transferTo(outputStream);
                     }
                 }
             }
             outputStream.closeEntry();
         }
-    }
-
-    public void deleteTempDirectory(File directory) {
-        FileSystemUtils.deleteRecursively(directory);
     }
 
     private void validateName(String name) {
@@ -426,21 +415,38 @@ public class WorkspaceService {
         }
     }
 
-    public static class DirectoryCreatedView {
-        private final String path;
-        private final Integer directoryId;
+    private String baseEntrySql() {
+        return "SELECT e.id, e.user_id, e.parent_id, e.storage_object_id, e.name, e.entry_type, e.status, " +
+                "e.created_at, e.updated_at, o.sha256, o.md5, o.file_size, o.storage_path " +
+                "FROM file_entries e LEFT JOIN storage_objects o ON e.storage_object_id = o.id";
+    }
 
-        public DirectoryCreatedView(String path, Integer directoryId) {
-            this.path = path;
-            this.directoryId = directoryId;
-        }
+    private MapSqlParameterSource params(Long userId) {
+        return new MapSqlParameterSource("userId", userId);
+    }
 
-        public String getPath() {
-            return path;
-        }
+    private Instant toInstant(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
+    }
 
-        public Integer getDirectoryId() {
-            return directoryId;
+    public record EntryRecord(Long id,
+                              Long userId,
+                              Long parentId,
+                              Long storageObjectId,
+                              String name,
+                              String entryType,
+                              boolean active,
+                              Instant createdAt,
+                              Instant updatedAt,
+                              String sha256,
+                              String md5,
+                              Long fileSize,
+                              String storagePath) {
+        public boolean directory() {
+            return "DIRECTORY".equals(entryType);
         }
+    }
+
+    public record DirectoryCreatedView(String path, Long directoryId) {
     }
 }

@@ -1,21 +1,21 @@
 package com.suannai.netdisk.v2.workspace;
 
 public class FileEntryView {
-    private Integer id;
+    private Long id;
     private String name;
     private boolean directory;
     private boolean status;
-    private Integer parentId;
+    private Long parentId;
     private String uploadDate;
     private long size;
     private String fileHash;
     private String downloadUrl;
 
-    public Integer getId() {
+    public Long getId() {
         return id;
     }
 
-    public void setId(Integer id) {
+    public void setId(Long id) {
         this.id = id;
     }
 
@@ -43,11 +43,11 @@ public class FileEntryView {
         this.status = status;
     }
 
-    public Integer getParentId() {
+    public Long getParentId() {
         return parentId;
     }
 
-    public void setParentId(Integer parentId) {
+    public void setParentId(Long parentId) {
         this.parentId = parentId;
     }
 

@@ -1,17 +1,17 @@
 package com.suannai.netdisk.v2.files;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 public class CreateDirectoryRequest {
-    private Integer parentId;
+    private Long parentId;
     @NotBlank
     private String name;
 
-    public Integer getParentId() {
+    public Long getParentId() {
         return parentId;
     }
 
-    public void setParentId(Integer parentId) {
+    public void setParentId(Long parentId) {
         this.parentId = parentId;
     }
 

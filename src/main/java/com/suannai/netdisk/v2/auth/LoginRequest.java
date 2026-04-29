@@ -1,6 +1,6 @@
 package com.suannai.netdisk.v2.auth;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 public class LoginRequest {
     @NotBlank

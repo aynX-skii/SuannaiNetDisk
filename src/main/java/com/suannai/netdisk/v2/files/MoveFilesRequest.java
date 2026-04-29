@@ -1,28 +1,28 @@
 package com.suannai.netdisk.v2.files;
 
-import javax.validation.constraints.NotEmpty;
-import javax.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
 
 public class MoveFilesRequest {
     @NotEmpty
-    private List<Integer> ids;
+    private List<Long> ids;
     @NotNull
-    private Integer targetParentId;
+    private Long targetParentId;
 
-    public List<Integer> getIds() {
+    public List<Long> getIds() {
         return ids;
     }
 
-    public void setIds(List<Integer> ids) {
+    public void setIds(List<Long> ids) {
         this.ids = ids;
     }
 
-    public Integer getTargetParentId() {
+    public Long getTargetParentId() {
         return targetParentId;
     }
 
-    public void setTargetParentId(Integer targetParentId) {
+    public void setTargetParentId(Long targetParentId) {
         this.targetParentId = targetParentId;
     }
 }

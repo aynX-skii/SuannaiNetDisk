@@ -1,18 +1,18 @@
 package com.suannai.netdisk.v2.profile;
 
 public class UserProfileView {
-    private Integer id;
+    private Long id;
     private String username;
     private String nickname;
     private boolean status;
-    private Integer imgServiceId;
+    private Long imgServiceId;
     private String avatarUrl;
 
-    public Integer getId() {
+    public Long getId() {
         return id;
     }
 
-    public void setId(Integer id) {
+    public void setId(Long id) {
         this.id = id;
     }
 
@@ -40,11 +40,11 @@ public class UserProfileView {
         this.status = status;
     }
 
-    public Integer getImgServiceId() {
+    public Long getImgServiceId() {
         return imgServiceId;
     }
 
-    public void setImgServiceId(Integer imgServiceId) {
+    public void setImgServiceId(Long imgServiceId) {
         this.imgServiceId = imgServiceId;
     }
 
