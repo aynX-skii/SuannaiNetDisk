@@ -1,6 +1,12 @@
 server:
   port: 8080
   servlet:
+    session:
+      cookie:
+        name: NETDISK_SESSION
+        http-only: true
+        same-site: ${NETDISK_SESSION_COOKIE_SAME_SITE:Lax}
+        secure: ${NETDISK_SESSION_COOKIE_SECURE:false}
     encoding:
       charset: UTF-8
       enabled: true
@@ -24,8 +30,15 @@ spring:
   flyway:
     baseline-on-migrate: false
     locations: classpath:db/migration
+  session:
+    timeout: ${NETDISK_SESSION_TIMEOUT:30m}
+    jdbc:
+      initialize-schema: never
 
 netdisk:
+  cors:
+    allowed-origins: ${NETDISK_CORS_ALLOWED_ORIGINS:}
+    allowed-origin-patterns: ${NETDISK_CORS_ALLOWED_ORIGIN_PATTERNS:}
   storage:
     upload-path: ${NETDISK_UPLOAD_PATH:./data/netdisk/upload}
     temp-dir-name: ${NETDISK_UPLOAD_TEMP_DIR:.tmp}
