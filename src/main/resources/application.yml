@@ -1,12 +1,6 @@
 server:
   port: 8080
   servlet:
-    session:
-      cookie:
-        name: NETDISK_SESSION
-        http-only: true
-        same-site: ${NETDISK_SESSION_COOKIE_SAME_SITE:Lax}
-        secure: ${NETDISK_SESSION_COOKIE_SECURE:false}
     encoding:
       charset: UTF-8
       enabled: true
@@ -30,10 +24,24 @@ spring:
   flyway:
     baseline-on-migrate: false
     locations: classpath:db/migration
-  session:
-    timeout: ${NETDISK_SESSION_TIMEOUT:30m}
-    jdbc:
-      initialize-schema: never
+
+sa-token:
+  token-name: NETDISK_TOKEN
+  timeout: ${NETDISK_SESSION_TIMEOUT_SECONDS:2592000}
+  active-timeout: ${NETDISK_SESSION_ACTIVE_TIMEOUT_SECONDS:1800}
+  is-concurrent: true
+  is-share: false
+  is-read-body: false
+  is-read-header: true
+  is-read-cookie: true
+  is-lasting-cookie: true
+  auto-renew: true
+  token-style: uuid
+  is-log: false
+  cookie:
+    http-only: true
+    same-site: ${NETDISK_SESSION_COOKIE_SAME_SITE:Lax}
+    secure: ${NETDISK_SESSION_COOKIE_SECURE:false}
 
 netdisk:
   cors:

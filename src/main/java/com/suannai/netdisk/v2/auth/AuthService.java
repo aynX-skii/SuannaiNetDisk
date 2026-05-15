@@ -8,8 +8,8 @@ import com.suannai.netdisk.service.AppSettingsService;
 import com.suannai.netdisk.v2.profile.ProfileService;
 import com.suannai.netdisk.v2.profile.UserProfileView;
 import com.suannai.netdisk.v2.workspace.WorkspaceService;
+import cn.dev33.satoken.stp.StpUtil;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -51,7 +51,7 @@ public class AuthService {
     }
 
     @Transactional
-    public UserProfileView login(LoginRequest request, HttpServletRequest httpServletRequest, HttpSession session) {
+    public UserProfileView login(LoginRequest request, HttpServletRequest httpServletRequest) {
         if (!appSettingsService.isEnabled("allow_login")) {
             throw new ApiException("FORBIDDEN", "管理员已关闭登录");
         }
@@ -75,12 +75,12 @@ public class AuthService {
         jdbcTemplate.update(sql, update);
 
         workspaceService.ensureRoot(credential.id());
-        SessionUserHelper.signIn(session, credential.id(), credential.username());
+        SessionUserHelper.signIn(credential.id(), credential.username());
         return profileService.toView(credential.id());
     }
 
     @Transactional
-    public UserProfileView register(RegisterRequest request, HttpSession session) {
+    public UserProfileView register(RegisterRequest request) {
         if (!appSettingsService.isEnabled("allow_register")) {
             throw new ApiException("FORBIDDEN", "管理员已关闭注册");
         }
@@ -108,12 +108,14 @@ public class AuthService {
 
         Long id = Objects.requireNonNull(keyHolder.getKey(), "user id").longValue();
         workspaceService.ensureRoot(id);
-        SessionUserHelper.signIn(session, id, request.getUsername());
+        SessionUserHelper.signIn(id, request.getUsername());
         return profileService.toView(id);
     }
 
-    public void logout(HttpSession session) {
-        session.invalidate();
+    public void logout() {
+        if (StpUtil.isLogin()) {
+            StpUtil.logout();
+        }
     }
 
     private UserCredential findCredential(String username) {

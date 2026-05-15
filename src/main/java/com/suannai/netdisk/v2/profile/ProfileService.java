@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.servlet.http.HttpSession;
 import java.util.List;
 
 @Service
@@ -48,7 +47,7 @@ public class ProfileService {
     }
 
     @Transactional
-    public UserProfileView updateProfile(SessionUser user, String nickname, HttpSession session) {
+    public UserProfileView updateProfile(SessionUser user, String nickname) {
         jdbcTemplate.update(
                 "UPDATE users SET nickname = :nickname WHERE id = :id",
                 new MapSqlParameterSource().addValue("nickname", nickname).addValue("id", user.id())
@@ -57,9 +56,9 @@ public class ProfileService {
     }
 
     @Transactional
-    public UserProfileView updateAvatar(SessionUser user, MultipartFile file, HttpSession session) throws Exception {
+    public UserProfileView updateAvatar(SessionUser user, MultipartFile file) throws Exception {
         if (file.isEmpty()) {
-            throw new ApiException("EMPTY_FILE", "请选择头像文件");
+            throw new ApiException("EMPTY_FILE", "\u8bf7\u9009\u62e9\u5934\u50cf\u6587\u4ef6");
         }
 
         Long avatarEntryId = uploadService.storeAvatar(user, file);
@@ -77,7 +76,7 @@ public class ProfileService {
                 userMapper
         );
         if (users.isEmpty()) {
-            throw new ApiException("NOT_FOUND", "用户不存在");
+            throw new ApiException("NOT_FOUND", "\u7528\u6237\u4e0d\u5b58\u5728");
         }
         return users.get(0);
     }

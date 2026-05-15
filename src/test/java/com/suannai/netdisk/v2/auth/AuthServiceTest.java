@@ -12,7 +12,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.mock.web.MockHttpSession;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -52,7 +51,7 @@ class AuthServiceTest {
         when(appSettingsService.isEnabled("allow_login")).thenReturn(false);
 
         ApiException exception = assertThrows(ApiException.class, () ->
-                authService.login(request, new MockHttpServletRequest(), new MockHttpSession())
+                authService.login(request, new MockHttpServletRequest())
         );
         assertEquals("FORBIDDEN", exception.getCode());
     }
